@@ -32,7 +32,7 @@ jobs:
           yes | buildozer android debug 2>&1 | tail -20
 
       - name: Сохраняем APK
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: autoconspect-apk
           path: bin/*.apk
