@@ -1,0 +1,207 @@
+import urllib.request
+import urllib.error
+import json
+import threading
+import os
+
+from kivy.app import App
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.label import Label
+from kivy.uix.textinput import TextInput
+from kivy.uix.button import Button
+from kivy.uix.scrollview import ScrollView
+from kivy.core.window import Window
+from kivy.utils import get_color_from_hex
+from kivy.metrics import dp
+from kivy.clock import Clock
+
+# ─────────────────────────────────────────
+#  СЮДА ВСТАВЬ СВОЙ GEMINI API КЛЮЧ
+# ─────────────────────────────────────────
+GEMINI_API_KEY = "AIzaSyBPt0avOkqdOAXyJweT62C6hpW9A--Loro"
+# ─────────────────────────────────────────
+
+SYSTEM_PROMPT = """Ты — профессиональный составитель конспектов. Пишешь на русском языке.
+
+ВАЖНО — читай запрос внимательно и соблюдай указания пользователя:
+- Если просят "больше", "подробнее", "развёрнуто" — пиши максимально полный конспект
+- Если просят "короче", "кратко", "сжато" — пиши только самое главное
+- Если просят "простыми словами" — избегай сложных терминов
+- Если просят "академически" — используй научный стиль
+
+Стандартный формат конспекта:
+1. Заголовок темы (большими буквами)
+2. Краткое введение (2-3 предложения)
+3. Основные разделы с подзаголовками
+4. Ключевые понятия выделяй через двоеточие
+5. Важные списки оформляй через •
+6. В конце — краткие выводы
+
+Только конспект — без вводных слов."""
+
+
+def generate_conspect(topic, on_done, on_error):
+    def run():
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+            payload = json.dumps({
+                "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
+                "contents": [{"parts": [{"text": f"Составь конспект по теме: {topic}"}]}],
+                "generationConfig": {"maxOutputTokens": 8192, "temperature": 0.7}
+            }).encode("utf-8")
+
+            req = urllib.request.Request(
+                url, data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                text = data["candidates"][0]["content"]["parts"][0]["text"]
+                Clock.schedule_once(lambda dt: on_done(text))
+
+        except urllib.error.HTTPError as e:
+            body = e.read().decode("utf-8")
+            try:
+                msg = json.loads(body)["error"]["message"]
+            except Exception:
+                msg = body
+            Clock.schedule_once(lambda dt: on_error(f"Ошибка API: {msg}"))
+        except Exception as e:
+            Clock.schedule_once(lambda dt: on_error(f"Ошибка: {str(e)}"))
+
+    threading.Thread(target=run, daemon=True).start()
+
+
+class ConspectApp(App):
+    def build(self):
+        Window.clearcolor = get_color_from_hex("#0f1117")
+
+        root = BoxLayout(orientation="vertical", padding=dp(16), spacing=dp(12))
+
+        # Заголовок
+        title = Label(
+            text="📝 Автоконспект",
+            font_size=dp(22),
+            bold=True,
+            color=get_color_from_hex("#4f8cff"),
+            size_hint_y=None,
+            height=dp(50),
+        )
+        root.add_widget(title)
+
+        subtitle = Label(
+            text="ИИ генерирует конспект по вашей теме",
+            font_size=dp(13),
+            color=get_color_from_hex("#8890a4"),
+            size_hint_y=None,
+            height=dp(25),
+        )
+        root.add_widget(subtitle)
+
+        # Поле ввода
+        self.topic_input = TextInput(
+            hint_text="Введите тему или описание...",
+            font_size=dp(15),
+            background_color=get_color_from_hex("#1a1d27"),
+            foreground_color=get_color_from_hex("#e8eaf0"),
+            hint_text_color=get_color_from_hex("#8890a4"),
+            cursor_color=get_color_from_hex("#4f8cff"),
+            size_hint_y=None,
+            height=dp(80),
+            multiline=True,
+            padding=[dp(12), dp(10)],
+        )
+        root.add_widget(self.topic_input)
+
+        # Кнопки
+        btn_row = BoxLayout(orientation="horizontal", size_hint_y=None,
+                            height=dp(48), spacing=dp(10))
+
+        self.gen_btn = Button(
+            text="Создать конспект",
+            font_size=dp(15),
+            bold=True,
+            background_color=get_color_from_hex("#4f8cff"),
+            color=get_color_from_hex("#ffffff"),
+            on_press=self.on_generate,
+        )
+        btn_row.add_widget(self.gen_btn)
+
+        clear_btn = Button(
+            text="Очистить",
+            font_size=dp(14),
+            background_color=get_color_from_hex("#1a1d27"),
+            color=get_color_from_hex("#8890a4"),
+            size_hint_x=0.35,
+            on_press=self.on_clear,
+        )
+        btn_row.add_widget(clear_btn)
+        root.add_widget(btn_row)
+
+        # Статус
+        self.status_label = Label(
+            text="Введите тему и нажмите «Создать конспект»",
+            font_size=dp(12),
+            color=get_color_from_hex("#8890a4"),
+            size_hint_y=None,
+            height=dp(25),
+        )
+        root.add_widget(self.status_label)
+
+        # Вывод конспекта
+        scroll = ScrollView()
+        self.output_label = Label(
+            text="",
+            font_size=dp(14),
+            color=get_color_from_hex("#e8eaf0"),
+            size_hint_y=None,
+            text_size=(Window.width - dp(32), None),
+            markup=True,
+            valign="top",
+            padding=[dp(12), dp(12)],
+        )
+        self.output_label.bind(texture_size=self.output_label.setter("size"))
+        scroll.add_widget(self.output_label)
+        root.add_widget(scroll)
+
+        return root
+
+    def on_generate(self, *args):
+        topic = self.topic_input.text.strip()
+        if not topic:
+            self.status_label.text = "⚠️ Введите тему!"
+            self.status_label.color = get_color_from_hex("#e05c5c")
+            return
+
+        self.output_label.text = ""
+        self.status_label.text = "⏳ Генерирую конспект…"
+        self.status_label.color = get_color_from_hex("#8890a4")
+        self.gen_btn.disabled = True
+        self.gen_btn.text = "Генерирую…"
+
+        generate_conspect(topic, self.on_done, self.on_error)
+
+    def on_done(self, text):
+        self.output_label.text = text
+        self.status_label.text = "✅ Конспект готов"
+        self.status_label.color = get_color_from_hex("#4caf82")
+        self.gen_btn.disabled = False
+        self.gen_btn.text = "Создать конспект"
+
+    def on_error(self, msg):
+        self.output_label.text = f"[color=#e05c5c]{msg}[/color]"
+        self.status_label.text = "❌ Ошибка"
+        self.status_label.color = get_color_from_hex("#e05c5c")
+        self.gen_btn.disabled = False
+        self.gen_btn.text = "Создать конспект"
+
+    def on_clear(self, *args):
+        self.topic_input.text = ""
+        self.output_label.text = ""
+        self.status_label.text = "Введите тему и нажмите «Создать конспект»"
+        self.status_label.color = get_color_from_hex("#8890a4")
+
+
+if __name__ == "__main__":
+    ConspectApp().run()
