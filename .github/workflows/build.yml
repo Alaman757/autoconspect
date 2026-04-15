@@ -2,7 +2,9 @@ name: Build APK
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
+  workflow_dispatch:
 
 jobs:
   build:
@@ -12,14 +14,16 @@ jobs:
       image: kivy/buildozer
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Build APK
         run: |
-          buildozer android debug --allow-root
+          buildozer --allow-root android debug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: apk
           path: bin/*.apk
+          if-no-files-found: error
