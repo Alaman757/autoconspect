@@ -17,6 +17,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Create secret_config.py
+        run: |
+          cat > secret_config.py <<EOF
+          GEMINI_API_KEY = "${{ secrets.GEMINI_API_KEY }}"
+          EOF
+
       - name: Build APK
         run: |
           buildozer --allow-root android debug
