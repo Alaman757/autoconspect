@@ -67,7 +67,6 @@ jobs:
         run: |
           export ANDROID_SDK_ROOT=$HOME/android-sdk
           export PATH=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH
-          buildozer android clean
           buildozer android debug
 
       - name: Upload APK
