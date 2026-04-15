@@ -23,24 +23,28 @@ jobs:
         with:
           python-version: '3.10'
 
+      - name: Принимаем лицензии и устанавливаем SDK
+        run: |
+          yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses || true
+          $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager \
+            "platform-tools" \
+            "build-tools;33.0.2" \
+            "platforms;android-33"
+
       - name: Устанавливаем зависимости
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            git zip unzip autoconf libtool pkg-config \
-            zlib1g-dev libncurses5-dev libncursesw5-dev \
-            libtinfo5 cmake libffi-dev libssl-dev
+          sudo apt-get install -y git zip unzip autoconf libtool pkg-config \
+            zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 cmake libffi-dev libssl-dev
           pip install buildozer==1.5.0 cython==0.29.33
 
-      - name: Принимаем лицензии Android SDK
-        run: |
-          mkdir -p $HOME/.android
-          echo "count=0" > $HOME/.android/repositories.cfg
-          yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses || true
-          yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager "platform-tools" "build-tools;33.0.2" "platforms;android-33" || true
-
       - name: Собираем APK
-        run: buildozer android debug
+        run: |
+          export ANDROIDSDK=$ANDROID_SDK_ROOT
+          export ANDROIDNDK=$ANDROID_NDK_ROOT
+          export ANDROIDAPI=33
+          export ANDROIDMINAPI=21
+          buildozer android debug
 
       - name: Сохраняем APK
         uses: actions/upload-artifact@v4
