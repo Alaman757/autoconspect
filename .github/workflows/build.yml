@@ -43,11 +43,11 @@ jobs:
             "platforms;android-33" \
             "build-tools;33.0.2"
 
-      # 💀 КЛЮЧЕВОЙ ФИКС — копируем SDK туда, где его ждёт билдозер
-      - name: Link SDK for buildozer
+      # 💀 ВАЖНО: правильное копирование SDK
+      - name: Fix SDK path for buildozer
         run: |
-          mkdir -p .buildozer/android/platform
-          cp -r $HOME/android-sdk .buildozer/android/platform/android-sdk
+          mkdir -p .buildozer/android/platform/android-sdk
+          cp -r $HOME/android-sdk/* .buildozer/android/platform/android-sdk/
 
       # 🧹 чистим кеш
       - name: Clean buildozer cache
