@@ -12,24 +12,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Java
+      - name: Set up Java
         uses: actions/setup-java@v3
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      # 💀 фикс лицензий (самое важное)
+      # 💀 ЖЁСТКИЙ фикс лицензий
       - name: Fix Android licenses
         run: |
           mkdir -p $ANDROID_SDK_ROOT/licenses
           echo "8933bad161af4178b1185d1a37fbf41ea5269c55" > $ANDROID_SDK_ROOT/licenses/android-sdk-license
           echo "84831b9409646a918e30573bab4c9c91346d8abd" >> $ANDROID_SDK_ROOT/licenses/android-sdk-license
 
+      # ⚙️ Установка SDK (жёстко 33 версия)
       - name: Install Android SDK
         run: |
           yes | sdkmanager --licenses || true
@@ -37,6 +38,12 @@ jobs:
             "platform-tools" \
             "platforms;android-33" \
             "build-tools;33.0.2"
+
+      # 🧹 УБИВАЕМ кеш билдозера (самое важное)
+      - name: Clean buildozer cache
+        run: |
+          rm -rf .buildozer
+          rm -rf ~/.buildozer
 
       - name: Install dependencies
         run: |
@@ -49,9 +56,11 @@ jobs:
           pip install --upgrade pip
           pip install buildozer==1.5.0 cython==0.29.33
 
+      # 🚀 СБОРКА
       - name: Build APK
         run: |
           export PATH=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH
+          buildozer android clean
           buildozer android debug
 
       - name: Upload APK
