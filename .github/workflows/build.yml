@@ -6,66 +6,14 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
+
+    container:
+      image: kivy/buildozer
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Java
-        uses: actions/setup-java@v3
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-
-      # 🔥 УСТАНОВКА SDK
-      - name: Install Android SDK
-        run: |
-          mkdir -p $HOME/android-sdk/cmdline-tools
-          cd $HOME/android-sdk/cmdline-tools
-
-          wget https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O tools.zip
-          unzip tools.zip
-          mv cmdline-tools latest
-
-          export ANDROID_SDK_ROOT=$HOME/android-sdk
-          export PATH=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH
-
-          yes | sdkmanager --licenses || true
-
-          sdkmanager \
-            "platform-tools" \
-            "platforms;android-33" \
-            "build-tools;33.0.2"
-
-      # 💀 ВАЖНО: правильное копирование SDK
-      - name: Fix SDK path for buildozer
-        run: |
-          mkdir -p .buildozer/android/platform/android-sdk
-          cp -r $HOME/android-sdk/* .buildozer/android/platform/android-sdk/
-
-      # 🧹 чистим кеш
-      - name: Clean buildozer cache
-        run: |
-          rm -rf ~/.buildozer
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            git zip unzip autoconf libtool pkg-config \
-            zlib1g-dev libncurses5-dev libncursesw5-dev \
-            libtinfo5 cmake libffi-dev libssl-dev
-
-          pip install --upgrade pip
-          pip install buildozer==1.5.0 cython==0.29.33
-
-      # 🚀 СБОРКА
       - name: Build APK
         run: |
           buildozer android debug
