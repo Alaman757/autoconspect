@@ -23,7 +23,7 @@ jobs:
         with:
           python-version: '3.10'
 
-      # 🔥 УСТАНОВКА ANDROID SDK
+      # 🔥 УСТАНОВКА SDK
       - name: Install Android SDK
         run: |
           mkdir -p $HOME/android-sdk/cmdline-tools
@@ -43,17 +43,15 @@ jobs:
             "platforms;android-33" \
             "build-tools;33.0.2"
 
-      # 💀 ВАЖНО: даём билдозеру путь к SDK
-      - name: Set environment variables
+      # 💀 КЛЮЧЕВОЙ ФИКС — копируем SDK туда, где его ждёт билдозер
+      - name: Link SDK for buildozer
         run: |
-          echo "ANDROIDSDK=$HOME/android-sdk" >> $GITHUB_ENV
-          echo "ANDROID_HOME=$HOME/android-sdk" >> $GITHUB_ENV
-          echo "ANDROID_SDK_ROOT=$HOME/android-sdk" >> $GITHUB_ENV
+          mkdir -p .buildozer/android/platform
+          cp -r $HOME/android-sdk .buildozer/android/platform/android-sdk
 
       # 🧹 чистим кеш
       - name: Clean buildozer cache
         run: |
-          rm -rf .buildozer
           rm -rf ~/.buildozer
 
       - name: Install dependencies
@@ -70,7 +68,6 @@ jobs:
       # 🚀 СБОРКА
       - name: Build APK
         run: |
-          export PATH=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH
           buildozer android debug
 
       - name: Upload APK
