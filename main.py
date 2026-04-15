@@ -12,11 +12,10 @@ from kivy.utils import get_color_from_hex
 from kivy.metrics import dp
 from kivy.network.urlrequest import UrlRequest
 
-
 # ─────────────────────────────────────────
-#  СЮДА ВСТАВЬ СВОЙ GEMINI API КЛЮЧ
+#  КЛЮЧ ТЕПЕРЬ БЕРЁТСЯ ИЗ secret_config.py
 # ─────────────────────────────────────────
-GEMINI_API_KEY = "AIzaSyBPt0avOkqdOAXyJweT62C6hpW9A--Loro"
+from secret_config import GEMINI_API_KEY
 # ─────────────────────────────────────────
 
 SYSTEM_PROMPT = """Ты — профессиональный составитель конспектов. Пишешь на русском языке.
@@ -144,20 +143,14 @@ class ConspectApp(App):
             self.status_label.color = get_color_from_hex("#e05c5c")
             return
 
-        if not GEMINI_API_KEY or GEMINI_API_KEY == "PASTE_YOUR_KEY_HERE":
-            self.on_error("Не указан API ключ Gemini")
-            return
-
         self.output_label.text = ""
         self.status_label.text = "Генерирую..."
         self.status_label.color = get_color_from_hex("#8890a4")
         self.gen_btn.disabled = True
         self.gen_btn.text = "Генерирую..."
 
-        url = (
-            "https://generativelanguage.googleapis.com/v1beta/models/"
-            f"gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
-        )
+        # ❗ КЛЮЧ УБРАН ИЗ URL
+        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
 
         payload_dict = {
             "system_instruction": {
@@ -179,8 +172,11 @@ class ConspectApp(App):
         }
 
         body = json.dumps(payload_dict)
+
+        # ❗ КЛЮЧ ТЕПЕРЬ В HEADER
         headers = {
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "x-goog-api-key": GEMINI_API_KEY
         }
 
         try:
@@ -201,29 +197,8 @@ class ConspectApp(App):
 
     def request_success(self, request, result):
         try:
-            if not isinstance(result, dict):
-                self.on_error(f"Некорректный ответ API: {result}")
-                return
-
             candidates = result.get("candidates")
-            if not candidates:
-                self.on_error(f"Нет candidates в ответе API: {result}")
-                return
-
-            content = candidates[0].get("content")
-            if not content:
-                self.on_error(f"Нет content в ответе API: {result}")
-                return
-
-            parts = content.get("parts")
-            if not parts:
-                self.on_error(f"Нет parts в ответе API: {result}")
-                return
-
-            text = parts[0].get("text")
-            if not text:
-                self.on_error(f"Нет text в ответе API: {result}")
-                return
+            text = candidates[0]["content"]["parts"][0]["text"]
 
             self.output_label.text = text
             self.status_label.text = "Конспект готов"
@@ -232,24 +207,16 @@ class ConspectApp(App):
             self.gen_btn.text = "Создать конспект"
 
         except Exception as e:
-            self.on_error(f"Ошибка обработки ответа: {str(e)}")
+            self.on_error(f"Ошибка обработки: {str(e)}")
 
     def request_error(self, request, error):
         self.on_error(f"Ошибка сети: {str(error)}")
 
     def request_failure(self, request, result):
-        try:
-            if isinstance(result, dict):
-                msg = result.get("error", {}).get("message", str(result))
-            else:
-                msg = str(result)
-        except Exception:
-            msg = str(result)
-
-        self.on_error(f"Ошибка API: {msg}")
+        self.on_error(f"Ошибка API: {str(result)}")
 
     def request_redirect(self, request, result):
-        self.on_error("Неожиданный редирект запроса")
+        self.on_error("Редирект запроса")
 
     def on_error(self, msg):
         self.output_label.text = f"[color=#e05c5c]{msg}[/color]"
