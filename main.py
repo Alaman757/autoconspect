@@ -1,22 +1,30 @@
 import json
 import os
 import random
+import ssl
 import threading
 import time
 import urllib.error
 import urllib.request
 
+try:
+    import certifi
+except Exception:
+    certifi = None
+
 from kivy.app import App
 from kivy.clock import Clock
 from kivy.core.clipboard import Clipboard
 from kivy.core.window import Window
-from kivy.graphics import Color, Line, RoundedRectangle
+from kivy.graphics import Color, Ellipse, Line, Rectangle, RoundedRectangle
 from kivy.metrics import dp, sp
 from kivy.properties import ListProperty, NumericProperty
 from kivy.uix.anchorlayout import AnchorLayout
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.floatlayout import FloatLayout
+from kivy.uix.gridlayout import GridLayout
+from kivy.uix.modalview import ModalView
 from kivy.uix.label import Label
 from kivy.uix.popup import Popup
 from kivy.uix.scrollview import ScrollView
@@ -24,30 +32,44 @@ from kivy.uix.textinput import TextInput
 from kivy.utils import get_color_from_hex
 
 try:
-    from secret_config import GEMINI_API_KEY
+    import secret_config
+    GEMINI_API_KEY = getattr(secret_config, "GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY", "")).strip()
+    DEEPSEEK_API_KEY = getattr(secret_config, "DEEPSEEK_API_KEY", os.environ.get("DEEPSEEK_API_KEY", "")).strip()
 except Exception:
     GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
+    DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "").strip()
 
-API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
 
 MODEL_OPTIONS = [
     {
         "label": "Gemini 2.5 Flash",
         "short": "2.5 Flash",
+        "provider": "gemini",
         "code": "gemini-2.5-flash",
-        "hint": "Основная модель. Качество выше, но иногда ловит 503 из-за нагрузки.",
+        "hint": "Основная модель. Качественная, но иногда ловит 503 из-за нагрузки.",
     },
     {
-        "label": "Gemini 2.5 Flash-Lite",
+        "label": "Gemini 2.5 Flash Lite",
         "short": "2.5 Lite",
+        "provider": "gemini",
         "code": "gemini-2.5-flash-lite",
-        "hint": "Быстрее и стабильнее. Хороший запасной вариант для диплома.",
+        "hint": "Быстрее и стабильнее. Хороший запасной вариант.",
     },
     {
         "label": "Gemini 1.5 Flash",
         "short": "1.5 Flash",
+        "provider": "gemini",
         "code": "gemini-1.5-flash",
-        "hint": "Старый режим. Может быть недоступен в API, но оставлен для проверки.",
+        "hint": "Старый режим. Может быть недоступен, но оставлен для проверки.",
+    },
+    {
+        "label": "DeepSeek V4 Flash",
+        "short": "DeepSeek",
+        "provider": "deepseek",
+        "code": "deepseek-v4-flash",
+        "hint": "Альтернативная модель через DeepSeek API. Нужен отдельный DEEPSEEK_API_KEY.",
     },
 ]
 
@@ -61,8 +83,9 @@ PRIMARY_MODEL = "gemini-2.5-flash"
 FALLBACK_MODEL = "gemini-2.5-flash-lite"
 MAX_ATTEMPTS = 3
 TIMEOUT_SEC = 45
+ALLOW_SSL_FALLBACK = True
 
-SYSTEM_PROMPT = """Ты — профессиональный составитель учебных конспектов. Пиши на русском языке.
+SYSTEM_PROMPT = """Ты профессиональный составитель учебных конспектов. Пиши на русском языке.
 
 Задача: превращать тему, кусок текста или описание в понятный структурированный конспект.
 
@@ -81,12 +104,12 @@ SYSTEM_PROMPT = """Ты — профессиональный составите�
 2-4 предложения.
 
 Основные пункты:
-• пункт
-• пункт
-• пункт
+- пункт
+- пункт
+- пункт
 
 Ключевые понятия:
-• термин: объяснение
+- термин: объяснение
 
 Главное запомнить:
 1. мысль
@@ -95,19 +118,57 @@ SYSTEM_PROMPT = """Ты — профессиональный составите�
 """
 
 
+def make_ssl_context():
+    try:
+        if certifi:
+            return ssl.create_default_context(cafile=certifi.where())
+        return ssl.create_default_context()
+    except Exception:
+        return None
+
+
+SSL_CONTEXT = make_ssl_context()
+
+
 def color(hex_value):
     return get_color_from_hex(hex_value)
 
 
+class NeonBackground(FloatLayout):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        with self.canvas.before:
+            Color(*color("#07111F"))
+            self.bg = Rectangle(pos=self.pos, size=self.size)
+            Color(0.10, 0.32, 0.95, 0.20)
+            self.glow_1 = Ellipse(pos=(self.x - dp(80), self.top - dp(170)), size=(dp(260), dp(260)))
+            Color(0.34, 0.13, 0.95, 0.16)
+            self.glow_2 = Ellipse(pos=(self.right - dp(180), self.y + dp(60)), size=(dp(260), dp(260)))
+            Color(0.05, 0.73, 0.55, 0.10)
+            self.glow_3 = Ellipse(pos=(self.right - dp(300), self.top - dp(310)), size=(dp(220), dp(220)))
+        self.bind(pos=self._update_canvas, size=self._update_canvas)
+
+    def _update_canvas(self, *args):
+        self.bg.pos = self.pos
+        self.bg.size = self.size
+        self.glow_1.pos = (self.x - dp(80), self.top - dp(170))
+        self.glow_2.pos = (self.right - dp(180), self.y + dp(60))
+        self.glow_3.pos = (self.right - dp(300), self.top - dp(310))
+
+
 class Card(BoxLayout):
-    bg_color = ListProperty(color("#111827"))
-    border_color = ListProperty(color("#243146"))
+    bg_color = ListProperty(color("#0E1A2C"))
+    border_color = ListProperty(color("#233B5D"))
+    shadow_color = ListProperty((0, 0, 0, 0.18))
     radius = NumericProperty(dp(18))
     border_width = NumericProperty(1)
+    shadow_offset = NumericProperty(dp(5))
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         with self.canvas.before:
+            self._shadow_col = Color(*self.shadow_color)
+            self._shadow = RoundedRectangle(pos=(self.x, self.y - self.shadow_offset), size=self.size, radius=[self.radius])
             self._bg_col = Color(*self.bg_color)
             self._bg_rect = RoundedRectangle(pos=self.pos, size=self.size, radius=[self.radius])
             self._border_col = Color(*self.border_color)
@@ -120,10 +181,16 @@ class Card(BoxLayout):
             size=self._update_canvas,
             bg_color=self._update_canvas,
             border_color=self._update_canvas,
+            shadow_color=self._update_canvas,
             radius=self._update_canvas,
+            shadow_offset=self._update_canvas,
         )
 
     def _update_canvas(self, *args):
+        self._shadow_col.rgba = self.shadow_color
+        self._shadow.pos = (self.x, self.y - self.shadow_offset)
+        self._shadow.size = self.size
+        self._shadow.radius = [self.radius]
         self._bg_col.rgba = self.bg_color
         self._bg_rect.pos = self.pos
         self._bg_rect.size = self.size
@@ -135,7 +202,7 @@ class Card(BoxLayout):
 
 class AutoConspectApp(App):
     def build(self):
-        Window.clearcolor = color("#0B1220")
+        Window.clearcolor = color("#07111F")
         self.selected_model = PRIMARY_MODEL
         self.detail_mode = "normal"
         self.last_result = ""
@@ -143,17 +210,13 @@ class AutoConspectApp(App):
         self.request_running = False
         self.model_popup = None
 
-        self.root_float = FloatLayout()
+        self.root_float = NeonBackground()
 
-        scroll = ScrollView(
-            size_hint=(1, 1),
-            bar_width=dp(4),
-            scroll_type=["bars", "content"],
-        )
+        scroll = ScrollView(size_hint=(1, 1), bar_width=dp(4), scroll_type=["bars", "content"])
         self.content = BoxLayout(
             orientation="vertical",
             size_hint_y=None,
-            padding=[dp(18), dp(22), dp(18), dp(105)],
+            padding=[dp(18), dp(22), dp(18), dp(112)],
             spacing=dp(14),
         )
         self.content.bind(minimum_height=self.content.setter("height"))
@@ -165,17 +228,17 @@ class AutoConspectApp(App):
         self._build_action_row()
         self._build_status_card()
         self._build_output_card()
-        self._build_model_fab()
+        self._build_model_button()
 
         return self.root_float
 
-    def _make_label(self, text, font_size, color_hex="#F5F7FB", bold=False, height=None):
+    def _make_label(self, text, font_size, color_hex="#F8FAFC", bold=False, height=None, halign="left"):
         label = Label(
             text=text,
             font_size=sp(font_size),
             color=color(color_hex),
             bold=bold,
-            halign="left",
+            halign=halign,
             valign="middle",
             size_hint_y=None,
         )
@@ -186,8 +249,8 @@ class AutoConspectApp(App):
             label.height = dp(height)
         return label
 
-    def _make_button(self, text, bg="#172033", fg="#F5F7FB", height=48, bold=True):
-        btn = Button(
+    def _make_button(self, text, bg="#131F34", fg="#F8FAFC", height=48, bold=True):
+        return Button(
             text=text,
             font_size=sp(14),
             bold=bold,
@@ -198,45 +261,76 @@ class AutoConspectApp(App):
             background_color=color(bg),
             color=color(fg),
         )
-        return btn
 
     def _build_header(self):
-        header = Card(
+        hero = Card(
             orientation="vertical",
-            padding=[dp(18), dp(18), dp(18), dp(16)],
-            spacing=dp(8),
+            padding=[dp(18), dp(18), dp(18), dp(18)],
+            spacing=dp(12),
             size_hint_y=None,
-            bg_color=color("#101A2D"),
-            border_color=color("#263854"),
-            radius=dp(22),
+            bg_color=color("#0D1B2E"),
+            border_color=color("#28466F"),
+            shadow_color=(0.02, 0.05, 0.12, 0.42),
+            radius=dp(26),
         )
-        header.bind(minimum_height=header.setter("height"))
+        hero.bind(minimum_height=hero.setter("height"))
 
-        title_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(42), spacing=dp(10))
+        title_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(58), spacing=dp(12))
 
         logo = Card(
             size_hint=(None, None),
-            size=(dp(42), dp(42)),
-            bg_color=color("#1D4ED8"),
-            border_color=color("#5B8CFF"),
-            radius=dp(14),
+            size=(dp(54), dp(54)),
+            bg_color=color("#4F8CFF"),
+            border_color=color("#7CADFF"),
+            shadow_color=(0.12, 0.28, 0.80, 0.35),
+            radius=dp(20),
         )
-        logo_label = Label(text="AI", font_size=sp(16), bold=True, color=color("#FFFFFF"))
-        logo.add_widget(logo_label)
+        logo.add_widget(Label(text="AI", font_size=sp(18), bold=True, color=color("#FFFFFF")))
         title_row.add_widget(logo)
 
         title_box = BoxLayout(orientation="vertical", spacing=dp(0))
-        title_box.add_widget(self._make_label("Автоконспект", 24, "#F5F7FB", True, 28))
-        title_box.add_widget(self._make_label("Тема → структура → готовый конспект", 12, "#AEB8CC", False, 18))
+        title_box.add_widget(self._make_label("Автоконспект", 26, "#FFFFFF", True, 32))
+        title_box.add_widget(self._make_label("Умный учебный конспект из любой темы", 12, "#B9C7DD", False, 20))
         title_row.add_widget(title_box)
+        hero.add_widget(title_row)
 
-        header.add_widget(title_row)
-        header.add_widget(self._make_label(
-            "Вставь тему, текст лекции или тезисы. Приложение само соберёт аккуратный учебный конспект.",
+        sub_card = Card(
+            orientation="vertical",
+            padding=[dp(13), dp(11), dp(13), dp(11)],
+            size_hint_y=None,
+            bg_color=color("#10243D"),
+            border_color=color("#244B78"),
+            shadow_color=(0, 0, 0, 0),
+            radius=dp(20),
+        )
+        sub_card.bind(minimum_height=sub_card.setter("height"))
+        sub_card.add_widget(self._make_label(
+            "Вставь тему, лекцию или тезисы. Приложение выделит структуру, ключевые понятия и главное для повторения.",
             14,
-            "#AEB8CC",
+            "#C5D2E8",
         ))
-        self.content.add_widget(header)
+        hero.add_widget(sub_card)
+
+        stats = GridLayout(cols=3, spacing=dp(8), size_hint_y=None, height=dp(58))
+        stats.add_widget(self._mini_stat("01", "Тема"))
+        stats.add_widget(self._mini_stat("02", "Модель"))
+        stats.add_widget(self._mini_stat("03", "Конспект"))
+        hero.add_widget(stats)
+
+        self.content.add_widget(hero)
+
+    def _mini_stat(self, number, text):
+        card = Card(
+            orientation="vertical",
+            padding=[dp(8), dp(6), dp(8), dp(6)],
+            bg_color=color("#0A1628"),
+            border_color=color("#1E3657"),
+            shadow_color=(0, 0, 0, 0),
+            radius=dp(16),
+        )
+        card.add_widget(self._make_label(number, 13, "#6EA0FF", True, 20, "center"))
+        card.add_widget(self._make_label(text, 11, "#90A2BD", False, 18, "center"))
+        return card
 
     def _build_input_card(self):
         card = Card(
@@ -244,32 +338,32 @@ class AutoConspectApp(App):
             padding=[dp(16), dp(16), dp(16), dp(16)],
             spacing=dp(12),
             size_hint_y=None,
-            bg_color=color("#111827"),
-            border_color=color("#243146"),
-            radius=dp(20),
+            bg_color=color("#0E1A2C"),
+            border_color=color("#233B5D"),
+            radius=dp(24),
         )
         card.bind(minimum_height=card.setter("height"))
 
-        card.add_widget(self._make_label("Что законспектировать?", 17, "#F5F7FB", True))
-        card.add_widget(self._make_label("Чем точнее запрос, тем чище структура. Например: 'Фотосинтез простыми словами, кратко'.", 12, "#7E8AA3"))
+        card.add_widget(self._make_label("Материал для конспекта", 17, "#F8FAFC", True))
+        card.add_widget(self._make_label("Лучше писать конкретно: тема, класс, стиль и желаемая длина.", 12, "#8495AF"))
 
         input_wrap = Card(
             orientation="vertical",
             padding=[dp(12), dp(8), dp(12), dp(8)],
             size_hint_y=None,
-            height=dp(128),
-            bg_color=color("#172033"),
-            border_color=color("#2B3A55"),
-            radius=dp(18),
+            height=dp(142),
+            bg_color=color("#131F34"),
+            border_color=color("#2B456B"),
+            radius=dp(20),
         )
         self.topic_input = TextInput(
-            hint_text="Введите тему, описание или текст...",
+            hint_text="Например: фотосинтез простыми словами",
             font_size=sp(15),
             background_normal="",
             background_active="",
             background_color=(0, 0, 0, 0),
-            foreground_color=color("#F5F7FB"),
-            hint_text_color=color("#7E8AA3"),
+            foreground_color=color("#F8FAFC"),
+            hint_text_color=color("#8495AF"),
             cursor_color=color("#5B8CFF"),
             multiline=True,
             padding=[0, dp(8), 0, dp(8)],
@@ -280,7 +374,7 @@ class AutoConspectApp(App):
         chips = BoxLayout(orientation="horizontal", spacing=dp(8), size_hint_y=None, height=dp(42))
         self.detail_buttons = {}
         for key, info in DETAIL_OPTIONS.items():
-            btn = self._make_button(info["label"], bg="#172033", fg="#AEB8CC", height=40, bold=True)
+            btn = self._make_button(info["label"], bg="#131F34", fg="#AEBBCE", height=40, bold=True)
             btn.bind(on_release=lambda inst, mode=key: self.set_detail_mode(mode))
             chips.add_widget(btn)
             self.detail_buttons[key] = btn
@@ -294,11 +388,10 @@ class AutoConspectApp(App):
         self.generate_btn.bind(on_release=self.on_generate)
         row.add_widget(self.generate_btn)
 
-        clear_btn = self._make_button("Очистить", bg="#111827", fg="#AEB8CC", height=54, bold=True)
+        clear_btn = self._make_button("Очистить", bg="#0E1A2C", fg="#AEBBCE", height=54, bold=True)
         clear_btn.size_hint_x = 0.38
         clear_btn.bind(on_release=self.on_clear)
         row.add_widget(clear_btn)
-
         self.content.add_widget(row)
 
     def _build_status_card(self):
@@ -307,14 +400,14 @@ class AutoConspectApp(App):
             padding=[dp(14), dp(12), dp(14), dp(12)],
             spacing=dp(4),
             size_hint_y=None,
-            bg_color=color("#0F172A"),
-            border_color=color("#243146"),
-            radius=dp(18),
+            bg_color=color("#0B1728"),
+            border_color=color("#233B5D"),
+            radius=dp(20),
         )
         self.status_card.bind(minimum_height=self.status_card.setter("height"))
 
-        self.status_title = self._make_label("Готов к работе", 14, "#2CCB8C", True)
-        self.status_text = self._make_label("Модель: Gemini 2.5 Flash · режим: Стандарт", 12, "#AEB8CC")
+        self.status_title = self._make_label("Готов к работе", 14, "#35D49B", True)
+        self.status_text = self._make_label("Модель: Gemini 2.5 Flash, режим: Стандарт", 12, "#AEBBCE")
         self.status_card.add_widget(self.status_title)
         self.status_card.add_widget(self.status_text)
         self.content.add_widget(self.status_card)
@@ -325,21 +418,21 @@ class AutoConspectApp(App):
             padding=[dp(16), dp(16), dp(16), dp(16)],
             spacing=dp(12),
             size_hint_y=None,
-            bg_color=color("#111827"),
-            border_color=color("#243146"),
-            radius=dp(20),
+            bg_color=color("#0E1A2C"),
+            border_color=color("#233B5D"),
+            radius=dp(24),
         )
         card.bind(minimum_height=card.setter("height"))
 
         top_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(40), spacing=dp(10))
         title_box = BoxLayout(orientation="vertical")
-        self.output_title = self._make_label("Конспект", 17, "#F5F7FB", True, 23)
-        self.output_meta = self._make_label("Здесь появится результат", 12, "#7E8AA3", False, 17)
+        self.output_title = self._make_label("Конспект", 17, "#F8FAFC", True, 23)
+        self.output_meta = self._make_label("Здесь появится результат", 12, "#8495AF", False, 17)
         title_box.add_widget(self.output_title)
         title_box.add_widget(self.output_meta)
         top_row.add_widget(title_box)
 
-        copy_btn = self._make_button("Копия", bg="#172033", fg="#AEB8CC", height=40, bold=True)
+        copy_btn = self._make_button("Копия", bg="#131F34", fg="#AEBBCE", height=40, bold=True)
         copy_btn.size_hint_x = 0.32
         copy_btn.bind(on_release=self.copy_result)
         top_row.add_widget(copy_btn)
@@ -349,16 +442,16 @@ class AutoConspectApp(App):
             orientation="vertical",
             padding=[dp(14), dp(14), dp(14), dp(14)],
             size_hint_y=None,
-            bg_color=color("#0B1220"),
-            border_color=color("#1E2B43"),
+            bg_color=color("#08111F"),
+            border_color=color("#1B2E4A"),
             radius=dp(16),
         )
         result_wrap.bind(minimum_height=result_wrap.setter("height"))
 
         self.output_label = Label(
-            text="Пока пусто. Введи тему выше и нажми «Создать конспект».",
+            text="Пока пусто. Введи тему выше и нажми Создать конспект.",
             font_size=sp(14),
-            color=color("#AEB8CC"),
+            color=color("#AEBBCE"),
             halign="left",
             valign="top",
             markup=False,
@@ -370,22 +463,17 @@ class AutoConspectApp(App):
         card.add_widget(result_wrap)
         self.content.add_widget(card)
 
-    def _build_model_fab(self):
-        holder = AnchorLayout(
-            anchor_x="right",
-            anchor_y="bottom",
-            size_hint=(1, 1),
-            padding=[0, 0, dp(16), dp(18)],
-        )
+    def _build_model_button(self):
+        holder = AnchorLayout(anchor_x="right", anchor_y="bottom", size_hint=(1, 1), padding=[0, 0, dp(16), dp(18)])
         self.model_button = Button(
-            text="2.5 Flash  ↓",
+            text="Модель: 2.5 Flash",
             font_size=sp(13),
             bold=True,
             size_hint=(None, None),
-            size=(dp(136), dp(52)),
+            size=(dp(158), dp(54)),
             background_normal="",
             background_down="",
-            background_color=color("#1D4ED8"),
+            background_color=color("#2563EB"),
             color=color("#FFFFFF"),
         )
         self.model_button.bind(on_release=self.open_model_popup)
@@ -399,84 +487,100 @@ class AutoConspectApp(App):
                 btn.background_color = color("#5B8CFF")
                 btn.color = color("#FFFFFF")
             else:
-                btn.background_color = color("#172033")
-                btn.color = color("#AEB8CC")
+                btn.background_color = color("#131F34")
+                btn.color = color("#AEBBCE")
         if hasattr(self, "status_text"):
             self.update_ready_status()
 
     def update_ready_status(self):
         model_short = self.get_model_short(self.selected_model)
         detail = DETAIL_OPTIONS[self.detail_mode]["label"]
-        self.status_text.text = f"Модель: Gemini {model_short} · режим: {detail}"
-        self.model_button.text = f"{model_short}  ↓"
+        self.status_text.text = f"Модель: {model_short}, режим: {detail}"
+        self.model_button.text = f"Модель: {model_short}"
 
-    def get_model_short(self, code):
+    def get_model_item(self, code):
         for item in MODEL_OPTIONS:
             if item["code"] == code:
-                return item["short"]
-        return code.replace("gemini-", "")
+                return item
+        return MODEL_OPTIONS[0]
+
+    def get_model_short(self, code):
+        return self.get_model_item(code)["short"]
 
     def open_model_popup(self, *args):
-        box = BoxLayout(orientation="vertical", padding=dp(14), spacing=dp(10))
-        hint = Label(
-            text="Выбери модель для новых запросов. Если 2.5 перегружена, попробуй Flash-Lite или 1.5.",
-            font_size=sp(13),
-            color=color("#AEB8CC"),
-            size_hint_y=None,
-            halign="left",
-            valign="top",
+        modal = ModalView(size_hint=(0.92, None), height=dp(520), background_color=(0, 0, 0, 0.55), auto_dismiss=True)
+
+        outer = Card(
+            orientation="vertical",
+            padding=[dp(18), dp(18), dp(18), dp(18)],
+            spacing=dp(12),
+            bg_color=color("#0B1728"),
+            border_color=color("#2B456B"),
+            shadow_color=(0, 0, 0, 0.38),
+            radius=dp(26),
         )
-        hint.bind(width=lambda inst, value: setattr(inst, "text_size", (value, None)))
-        hint.bind(texture_size=lambda inst, value: setattr(inst, "height", value[1] + dp(8)))
-        box.add_widget(hint)
+
+        outer.add_widget(self._make_label("Выбор модели", 22, "#FFFFFF", True, 31))
+        outer.add_widget(self._make_label(
+            "Если Gemini 2.5 перегружена, переключись на Lite или DeepSeek. Дипсик тоже не святой, но иногда спасает.",
+            13,
+            "#AEBBCE",
+        ))
 
         for item in MODEL_OPTIONS:
             active = item["code"] == self.selected_model
-            text = item["label"]
-            if active:
-                text += "  · активно"
-            btn = self._make_button(
-                text,
-                bg="#5B8CFF" if active else "#172033",
-                fg="#FFFFFF" if active else "#F5F7FB",
-                height=48,
-                bold=True,
+            model_card = Card(
+                orientation="vertical",
+                padding=[dp(12), dp(10), dp(12), dp(10)],
+                spacing=dp(3),
+                size_hint_y=None,
+                bg_color=color("#173966") if active else color("#101E32"),
+                border_color=color("#6EA0FF") if active else color("#243B5D"),
+                shadow_color=(0, 0, 0, 0.12),
+                radius=dp(18),
             )
-            btn.bind(on_release=lambda inst, model=item["code"]: self.select_model(model))
-            box.add_widget(btn)
+            model_card.bind(minimum_height=model_card.setter("height"))
+            title = item["label"] + (" - выбрано" if active else "")
+            btn = self._make_button(title, bg="#5B8CFF" if active else "#14243B", fg="#FFFFFF", height=42, bold=True)
+            btn.bind(on_release=lambda inst, model=item["code"], view=modal: self.select_model(model, view))
+            model_card.add_widget(btn)
+            model_card.add_widget(self._make_label(item["hint"], 11, "#93A4BC"))
+            outer.add_widget(model_card)
 
-            sub = self._make_label(item["hint"], 11, "#7E8AA3")
-            box.add_widget(sub)
+        close_btn = self._make_button("Закрыть", bg="#0E1A2C", fg="#D7E2F4", height=44, bold=True)
+        close_btn.bind(on_release=lambda inst: modal.dismiss())
+        outer.add_widget(close_btn)
 
-        self.model_popup = Popup(
-            title="Версия Gemini",
-            content=box,
-            size_hint=(0.92, None),
-            height=dp(410),
-            auto_dismiss=True,
-        )
-        self.model_popup.open()
+        modal.add_widget(outer)
+        self.model_popup = modal
+        modal.open()
 
-    def select_model(self, model_code):
+    def select_model(self, model_code, view=None):
         self.selected_model = model_code
-        if self.model_popup:
+        if view:
+            view.dismiss()
+        elif self.model_popup:
             self.model_popup.dismiss()
         self.status_title.text = "Модель переключена"
-        self.status_title.color = color("#2CCB8C")
+        self.status_title.color = color("#35D49B")
         self.update_ready_status()
 
     def on_generate(self, *args):
         if self.request_running:
-            self.set_status("Запрос уже идёт", "Дождись ответа. Повторный тап не ускорит сервер, внезапно.", "#F0B24C")
+            self.set_status("Запрос уже идет", "Дождись ответа. Повторный тап не ускорит сервер.", "#F0B24C")
             return
 
         topic = self.topic_input.text.strip()
         if not topic:
-            self.set_status("Нужна тема", "Поле пустое. Модель не умеет читать мысли, трагедия века.", "#FF6B6B")
+            self.set_status("Нужна тема", "Поле пустое. Модель не умеет читать мысли, какая потеря для науки.", "#FF6B6B")
             return
 
-        if not GEMINI_API_KEY:
+        model_item = self.get_model_item(self.selected_model)
+        if model_item["provider"] == "gemini" and not GEMINI_API_KEY:
             self.show_error("Не найден GEMINI_API_KEY. Проверь GitHub Secret и шаг Create secret_config.py в build.yml.")
+            return
+        if model_item["provider"] == "deepseek" and not DEEPSEEK_API_KEY:
+            self.show_error("Не найден DEEPSEEK_API_KEY. Создай второй GitHub Secret с ключом DeepSeek.")
             return
 
         mode_label = DETAIL_OPTIONS[self.detail_mode]["label"]
@@ -487,16 +591,12 @@ class AutoConspectApp(App):
         self.generate_btn.disabled = True
         self.generate_btn.text = "Генерирую..."
         self.output_label.text = ""
-        self.output_label.color = color("#AEB8CC")
+        self.output_label.color = color("#AEBBCE")
         self.output_title.text = "Генерация"
-        self.output_meta.text = f"{self.get_model_short(model)} · {mode_label}"
-        self.set_status("Отправляем запрос", "Создаю структуру конспекта...", "#AEB8CC")
+        self.output_meta.text = f"{self.get_model_short(model)}, {mode_label}"
+        self.set_status("Отправляем запрос", "Создаю структуру конспекта...", "#AEBBCE")
 
-        thread = threading.Thread(
-            target=self._worker_generate,
-            args=(topic, model, max_tokens, mode_label),
-            daemon=True,
-        )
+        thread = threading.Thread(target=self._worker_generate, args=(topic, model, max_tokens, mode_label), daemon=True)
         thread.start()
 
     def _worker_generate(self, topic, model, max_tokens, mode_label):
@@ -505,9 +605,9 @@ class AutoConspectApp(App):
         model_used = model
 
         try:
-            result = self.call_gemini_with_retry(model, prompt, max_tokens)
-        except TemporaryGeminiError:
-            if model != FALLBACK_MODEL:
+            result = self.call_model_with_retry(model, prompt, max_tokens)
+        except TemporaryAPIError:
+            if model == PRIMARY_MODEL:
                 fallback_used = True
                 model_used = FALLBACK_MODEL
                 self.ui(lambda: self.set_status(
@@ -516,12 +616,12 @@ class AutoConspectApp(App):
                     "#F0B24C",
                 ))
                 try:
-                    result = self.call_gemini_with_retry(FALLBACK_MODEL, prompt, max_tokens)
+                    result = self.call_model_with_retry(FALLBACK_MODEL, prompt, max_tokens)
                 except Exception as e:
                     self.ui(lambda err=e: self.finish_error(f"Ошибка API: {err}"))
                     return
             else:
-                self.ui(lambda: self.finish_error("Сервер Gemini сейчас перегружен. Попробуй позже или переключи модель."))
+                self.ui(lambda: self.finish_error("Сервер выбранной модели сейчас перегружен. Попробуй позже или переключи модель."))
                 return
         except Exception as e:
             self.ui(lambda err=e: self.finish_error(f"Ошибка API: {err}"))
@@ -536,38 +636,48 @@ class AutoConspectApp(App):
         self.ui(lambda: self.finish_success(text, model_used, fallback_used, usage))
 
     def build_user_prompt(self, topic, mode_label):
-        return (
-            f"Режим длины: {mode_label}.\n\n"
-            f"Составь конспект по теме или материалу ниже.\n\n"
-            f"Материал:\n{topic}"
-        )
+        return f"Режим длины: {mode_label}.\n\nСоставь конспект по теме или материалу ниже.\n\nМатериал:\n{topic}"
 
-    def call_gemini_with_retry(self, model, prompt, max_tokens):
+    def call_model_with_retry(self, model, prompt, max_tokens):
         last_error = None
         for attempt in range(1, MAX_ATTEMPTS + 1):
             try:
                 self.ui(lambda a=attempt, m=model: self.set_status(
                     "Генерирую",
-                    f"Модель {self.get_model_short(m)} · попытка {a}/{MAX_ATTEMPTS}",
-                    "#AEB8CC",
+                    f"Модель {self.get_model_short(m)}, попытка {a}/{MAX_ATTEMPTS}",
+                    "#AEBBCE",
                 ))
-                return self.call_gemini_once(model, prompt, max_tokens)
-            except TemporaryGeminiError as e:
+                return self.call_model_once(model, prompt, max_tokens)
+            except TemporaryAPIError as e:
                 last_error = e
                 if attempt < MAX_ATTEMPTS:
                     wait = (2 ** (attempt - 1)) + random.uniform(0.0, 0.4)
-                    self.ui(lambda w=wait: self.set_status(
-                        "Сервер занят",
-                        f"Повтор через {w:.1f} сек...",
-                        "#F0B24C",
-                    ))
+                    self.ui(lambda w=wait: self.set_status("Сервер занят", f"Повтор через {w:.1f} сек...", "#F0B24C"))
                     time.sleep(wait)
             except Exception:
                 raise
-        raise last_error or TemporaryGeminiError("Временная ошибка Gemini")
+        raise last_error or TemporaryAPIError("Временная ошибка API")
+
+    def call_model_once(self, model, prompt, max_tokens):
+        item = self.get_model_item(model)
+        if item["provider"] == "deepseek":
+            return self.call_deepseek_once(model, prompt, max_tokens)
+        return self.call_gemini_once(model, prompt, max_tokens)
+
+    def open_request(self, req):
+        try:
+            if SSL_CONTEXT:
+                return urllib.request.urlopen(req, timeout=TIMEOUT_SEC, context=SSL_CONTEXT)
+            return urllib.request.urlopen(req, timeout=TIMEOUT_SEC)
+        except urllib.error.URLError as e:
+            text = str(e)
+            if ALLOW_SSL_FALLBACK and "CERTIFICATE_VERIFY_FAILED" in text:
+                insecure_context = ssl._create_unverified_context()
+                return urllib.request.urlopen(req, timeout=TIMEOUT_SEC, context=insecure_context)
+            raise
 
     def call_gemini_once(self, model, prompt, max_tokens):
-        url = API_URL.format(model=model)
+        url = GEMINI_API_URL.format(model=model)
         payload = {
             "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
             "contents": [{"parts": [{"text": prompt}]}],
@@ -578,7 +688,6 @@ class AutoConspectApp(App):
                 "responseMimeType": "text/plain",
             },
         }
-
         body = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
             url,
@@ -591,38 +700,82 @@ class AutoConspectApp(App):
         )
 
         try:
-            with urllib.request.urlopen(req, timeout=TIMEOUT_SEC) as resp:
+            with self.open_request(req) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             raw = e.read().decode("utf-8", errors="replace")
             message = self.parse_api_error(raw)
-            if e.code in (429, 503, 504):
-                raise TemporaryGeminiError(message)
-            raise GeminiAPIError(f"{e.code}: {message}")
+            if e.code in (429, 500, 502, 503, 504):
+                raise TemporaryAPIError(message)
+            raise APIError(f"{e.code}: {message}")
         except urllib.error.URLError as e:
-            raise TemporaryGeminiError(str(e))
+            raise TemporaryAPIError(str(e))
 
-        return self.parse_api_success(data)
+        return self.parse_gemini_success(data)
 
-    def parse_api_success(self, data):
+    def call_deepseek_once(self, model, prompt, max_tokens):
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.45,
+            "max_tokens": max_tokens,
+            "stream": False,
+        }
+        body = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            DEEPSEEK_API_URL,
+            data=body,
+            headers={
+                "Content-Type": "application/json; charset=utf-8",
+                "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+            },
+            method="POST",
+        )
+
+        try:
+            with self.open_request(req) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            raw = e.read().decode("utf-8", errors="replace")
+            message = self.parse_api_error(raw)
+            if e.code in (429, 500, 502, 503, 504):
+                raise TemporaryAPIError(message)
+            raise APIError(f"{e.code}: {message}")
+        except urllib.error.URLError as e:
+            raise TemporaryAPIError(str(e))
+
+        return self.parse_deepseek_success(data)
+
+    def parse_gemini_success(self, data):
         candidates = data.get("candidates") or []
         if not candidates:
-            raise GeminiAPIError(f"Нет candidates в ответе: {data}")
-
+            raise APIError(f"Нет candidates в ответе: {data}")
         parts = candidates[0].get("content", {}).get("parts", [])
         text = "".join(part.get("text", "") for part in parts).strip()
         if not text:
-            raise GeminiAPIError(f"Нет текста в ответе: {data}")
+            raise APIError(f"Нет текста в ответе: {data}")
+        return {"text": text, "usage": data.get("usageMetadata", {})}
 
-        return {
-            "text": text,
-            "usage": data.get("usageMetadata", {}),
-        }
+    def parse_deepseek_success(self, data):
+        choices = data.get("choices") or []
+        if not choices:
+            raise APIError(f"Нет choices в ответе DeepSeek: {data}")
+        message = choices[0].get("message") or {}
+        text = (message.get("content") or "").strip()
+        if not text:
+            raise APIError(f"Нет текста в ответе DeepSeek: {data}")
+        return {"text": text, "usage": data.get("usage", {})}
 
     def parse_api_error(self, raw):
         try:
             data = json.loads(raw)
-            return data.get("error", {}).get("message", raw)
+            error = data.get("error")
+            if isinstance(error, dict):
+                return error.get("message", raw)
+            return str(error or raw)
         except Exception:
             return raw[:500] if raw else "Неизвестная ошибка API"
 
@@ -630,18 +783,18 @@ class AutoConspectApp(App):
         self.last_result = text
         self.last_model_used = model_used
         self.output_label.text = text
-        self.output_label.color = color("#F5F7FB")
+        self.output_label.color = color("#F8FAFC")
         self.output_title.text = "Конспект готов"
 
-        tokens = usage.get("totalTokenCount") or usage.get("total_tokens")
-        token_part = f" · токены: {tokens}" if tokens else ""
-        fallback_part = " · fallback" if fallback_used else ""
+        tokens = usage.get("totalTokenCount") or usage.get("total_tokens") or usage.get("total_tokens_count")
+        token_part = f", токены: {tokens}" if tokens else ""
+        fallback_part = ", fallback" if fallback_used else ""
         self.output_meta.text = f"{self.get_model_short(model_used)}{fallback_part}{token_part}"
 
         if fallback_used:
             self.set_status("Готово через запасную модель", f"Основная была занята, использована {self.get_model_short(model_used)}.", "#F0B24C")
         else:
-            self.set_status("Конспект готов", f"Модель: {self.get_model_short(model_used)}", "#2CCB8C")
+            self.set_status("Конспект готов", f"Модель: {self.get_model_short(model_used)}", "#35D49B")
 
         self.request_running = False
         self.generate_btn.disabled = False
@@ -660,7 +813,7 @@ class AutoConspectApp(App):
         self.output_label.color = color("#FF6B6B")
         self.set_status("Ошибка", "Проверь ключ, сеть или выбранную модель.", "#FF6B6B")
 
-    def set_status(self, title, text, title_color="#AEB8CC"):
+    def set_status(self, title, text, title_color="#AEBBCE"):
         self.status_title.text = title
         self.status_title.color = color(title_color)
         self.status_text.text = text
@@ -673,25 +826,25 @@ class AutoConspectApp(App):
             self.set_status("Копировать нечего", "Сначала создай конспект. Пустоту в буфер тащить не будем.", "#F0B24C")
             return
         Clipboard.copy(self.last_result)
-        self.set_status("Скопировано", "Конспект отправлен в буфер обмена.", "#2CCB8C")
+        self.set_status("Скопировано", "Конспект отправлен в буфер обмена.", "#35D49B")
 
     def on_clear(self, *args):
         self.topic_input.text = ""
         self.last_result = ""
         self.output_title.text = "Конспект"
         self.output_meta.text = "Здесь появится результат"
-        self.output_label.text = "Пока пусто. Введи тему выше и нажми «Создать конспект»."
-        self.output_label.color = color("#AEB8CC")
+        self.output_label.text = "Пока пусто. Введи тему выше и нажми Создать конспект."
+        self.output_label.color = color("#AEBBCE")
         self.status_title.text = "Готов к работе"
-        self.status_title.color = color("#2CCB8C")
+        self.status_title.color = color("#35D49B")
         self.update_ready_status()
 
 
-class GeminiAPIError(Exception):
+class APIError(Exception):
     pass
 
 
-class TemporaryGeminiError(GeminiAPIError):
+class TemporaryAPIError(APIError):
     pass
 
 
