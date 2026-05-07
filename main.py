@@ -24,9 +24,8 @@ from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.gridlayout import GridLayout
-from kivy.uix.modalview import ModalView
 from kivy.uix.label import Label
-from kivy.uix.popup import Popup
+from kivy.uix.modalview import ModalView
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.textinput import TextInput
 from kivy.utils import get_color_from_hex
@@ -34,13 +33,13 @@ from kivy.utils import get_color_from_hex
 try:
     import secret_config
     GEMINI_API_KEY = getattr(secret_config, "GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY", "")).strip()
-    DEEPSEEK_API_KEY = getattr(secret_config, "DEEPSEEK_API_KEY", os.environ.get("DEEPSEEK_API_KEY", "")).strip()
+    GROQ_API_KEY = getattr(secret_config, "GROQ_API_KEY", os.environ.get("GROQ_API_KEY", "")).strip()
 except Exception:
     GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
-    DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "").strip()
+    GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "").strip()
 
-GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
+
+GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 MODEL_OPTIONS = [
     {
@@ -48,35 +47,52 @@ MODEL_OPTIONS = [
         "short": "2.5 Flash",
         "provider": "gemini",
         "code": "gemini-2.5-flash",
-        "hint": "Основная модель. Качественная, но иногда ловит 503 из-за нагрузки.",
+        "api_version": "v1beta",
+        "hint": "Основная модель для качественных конспектов. Иногда ловит перегрузку.",
     },
     {
         "label": "Gemini 2.5 Flash Lite",
         "short": "2.5 Lite",
         "provider": "gemini",
         "code": "gemini-2.5-flash-lite",
-        "hint": "Быстрее и стабильнее. Хороший запасной вариант.",
+        "api_version": "v1beta",
+        "hint": "Более быстрый и лёгкий вариант, хороший запасной режим.",
     },
     {
         "label": "Gemini 1.5 Flash",
         "short": "1.5 Flash",
         "provider": "gemini",
         "code": "gemini-1.5-flash",
-        "hint": "Старый режим. Может быть недоступен, но оставлен для проверки.",
+        "api_version": "v1",
+        "hint": "Старый быстрый режим. Может быть недоступен в некоторых проектах.",
     },
     {
-        "label": "DeepSeek V4 Flash",
-        "short": "DeepSeek",
-        "provider": "deepseek",
-        "code": "deepseek-v4-flash",
-        "hint": "Альтернативная модель через DeepSeek API. Нужен отдельный DEEPSEEK_API_KEY.",
+        "label": "Groq Llama 3.1 8B",
+        "short": "Groq 8B",
+        "provider": "groq",
+        "code": "llama-3.1-8b-instant",
+        "hint": "Очень быстрый Groq-вариант. Хорош для коротких и средних конспектов.",
+    },
+    {
+        "label": "Groq Llama 3.3 70B",
+        "short": "Groq 70B",
+        "provider": "groq",
+        "code": "llama-3.3-70b-versatile",
+        "hint": "Более сильная модель Groq. Лучше качество, но может быть медленнее.",
+    },
+    {
+        "label": "Groq Qwen3 32B",
+        "short": "Groq Qwen",
+        "provider": "groq",
+        "code": "qwen/qwen3-32b",
+        "hint": "Альтернативная Groq-модель. Часто хорошо держит структуру ответа.",
     },
 ]
 
 DETAIL_OPTIONS = {
-    "short": {"label": "Кратко", "tokens": 512},
-    "normal": {"label": "Стандарт", "tokens": 896},
-    "full": {"label": "Подробно", "tokens": 1400},
+    "short": {"label": "Кратко", "tokens": 512, "desc": "только база"},
+    "normal": {"label": "Стандарт", "tokens": 896, "desc": "баланс"},
+    "full": {"label": "Подробно", "tokens": 1400, "desc": "максимум"},
 }
 
 PRIMARY_MODEL = "gemini-2.5-flash"
@@ -118,6 +134,10 @@ SYSTEM_PROMPT = """Ты профессиональный составитель 
 """
 
 
+def color(hex_value):
+    return get_color_from_hex(hex_value)
+
+
 def make_ssl_context():
     try:
         if certifi:
@@ -130,22 +150,22 @@ def make_ssl_context():
 SSL_CONTEXT = make_ssl_context()
 
 
-def color(hex_value):
-    return get_color_from_hex(hex_value)
-
-
 class NeonBackground(FloatLayout):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         with self.canvas.before:
             Color(*color("#07111F"))
             self.bg = Rectangle(pos=self.pos, size=self.size)
+
             Color(0.10, 0.32, 0.95, 0.20)
             self.glow_1 = Ellipse(pos=(self.x - dp(80), self.top - dp(170)), size=(dp(260), dp(260)))
+
             Color(0.34, 0.13, 0.95, 0.16)
             self.glow_2 = Ellipse(pos=(self.right - dp(180), self.y + dp(60)), size=(dp(260), dp(260)))
+
             Color(0.05, 0.73, 0.55, 0.10)
             self.glow_3 = Ellipse(pos=(self.right - dp(300), self.top - dp(310)), size=(dp(220), dp(220)))
+
         self.bind(pos=self._update_canvas, size=self._update_canvas)
 
     def _update_canvas(self, *args):
@@ -157,10 +177,10 @@ class NeonBackground(FloatLayout):
 
 
 class Card(BoxLayout):
-    bg_color = ListProperty(color("#0E1A2C"))
-    border_color = ListProperty(color("#233B5D"))
+    bg_color = ListProperty(color("#111827"))
+    border_color = ListProperty(color("#263348"))
     shadow_color = ListProperty((0, 0, 0, 0.18))
-    radius = NumericProperty(dp(18))
+    radius = NumericProperty(dp(22))
     border_width = NumericProperty(1)
     shadow_offset = NumericProperty(dp(5))
 
@@ -168,7 +188,11 @@ class Card(BoxLayout):
         super().__init__(**kwargs)
         with self.canvas.before:
             self._shadow_col = Color(*self.shadow_color)
-            self._shadow = RoundedRectangle(pos=(self.x, self.y - self.shadow_offset), size=self.size, radius=[self.radius])
+            self._shadow = RoundedRectangle(
+                pos=(self.x, self.y - self.shadow_offset),
+                size=self.size,
+                radius=[self.radius],
+            )
             self._bg_col = Color(*self.bg_color)
             self._bg_rect = RoundedRectangle(pos=self.pos, size=self.size, radius=[self.radius])
             self._border_col = Color(*self.border_color)
@@ -200,28 +224,40 @@ class Card(BoxLayout):
         self._border_line.width = self.border_width
 
 
+class PillButton(Button):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.background_normal = ""
+        self.background_down = ""
+        self.bold = True
+        self.font_size = sp(14)
+        self.size_hint_y = None
+        self.height = dp(48)
+
+
 class AutoConspectApp(App):
     def build(self):
         Window.clearcolor = color("#07111F")
+
         self.selected_model = PRIMARY_MODEL
         self.detail_mode = "normal"
         self.last_result = ""
         self.last_model_used = ""
         self.request_running = False
-        self.model_popup = None
+        self.model_modal = None
 
         self.root_float = NeonBackground()
 
-        scroll = ScrollView(size_hint=(1, 1), bar_width=dp(4), scroll_type=["bars", "content"])
+        self.scroll = ScrollView(size_hint=(1, 1), bar_width=dp(4), scroll_type=["bars", "content"])
         self.content = BoxLayout(
             orientation="vertical",
             size_hint_y=None,
-            padding=[dp(18), dp(22), dp(18), dp(112)],
-            spacing=dp(14),
+            padding=[dp(18), dp(22), dp(18), dp(110)],
+            spacing=dp(16),
         )
         self.content.bind(minimum_height=self.content.setter("height"))
-        scroll.add_widget(self.content)
-        self.root_float.add_widget(scroll)
+        self.scroll.add_widget(self.content)
+        self.root_float.add_widget(self.scroll)
 
         self._build_header()
         self._build_input_card()
@@ -241,6 +277,7 @@ class AutoConspectApp(App):
             halign=halign,
             valign="middle",
             size_hint_y=None,
+            markup=False,
         )
         label.bind(width=lambda inst, value: setattr(inst, "text_size", (value, None)))
         if height is None:
@@ -249,17 +286,13 @@ class AutoConspectApp(App):
             label.height = dp(height)
         return label
 
-    def _make_button(self, text, bg="#131F34", fg="#F8FAFC", height=48, bold=True):
-        return Button(
+    def _make_button(self, text, bg="#172033", fg="#F8FAFC", height=48, bold=True):
+        return PillButton(
             text=text,
-            font_size=sp(14),
-            bold=bold,
-            size_hint_y=None,
             height=dp(height),
-            background_normal="",
-            background_down="",
             background_color=color(bg),
             color=color(fg),
+            bold=bold,
         )
 
     def _build_header(self):
@@ -275,7 +308,7 @@ class AutoConspectApp(App):
         )
         hero.bind(minimum_height=hero.setter("height"))
 
-        title_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(58), spacing=dp(12))
+        title_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(54), spacing=dp(12))
 
         logo = Card(
             size_hint=(None, None),
@@ -283,7 +316,7 @@ class AutoConspectApp(App):
             bg_color=color("#4F8CFF"),
             border_color=color("#7CADFF"),
             shadow_color=(0.12, 0.28, 0.80, 0.35),
-            radius=dp(20),
+            radius=dp(18),
         )
         logo.add_widget(Label(text="AI", font_size=sp(18), bold=True, color=color("#FFFFFF")))
         title_row.add_widget(logo)
@@ -292,6 +325,7 @@ class AutoConspectApp(App):
         title_box.add_widget(self._make_label("Автоконспект", 26, "#FFFFFF", True, 32))
         title_box.add_widget(self._make_label("Умный учебный конспект из любой темы", 12, "#B9C7DD", False, 20))
         title_row.add_widget(title_box)
+
         hero.add_widget(title_row)
 
         sub_card = Card(
@@ -301,7 +335,7 @@ class AutoConspectApp(App):
             bg_color=color("#10243D"),
             border_color=color("#244B78"),
             shadow_color=(0, 0, 0, 0),
-            radius=dp(20),
+            radius=dp(18),
         )
         sub_card.bind(minimum_height=sub_card.setter("height"))
         sub_card.add_widget(self._make_label(
@@ -336,24 +370,26 @@ class AutoConspectApp(App):
         card = Card(
             orientation="vertical",
             padding=[dp(16), dp(16), dp(16), dp(16)],
-            spacing=dp(12),
+            spacing=dp(13),
             size_hint_y=None,
             bg_color=color("#0E1A2C"),
             border_color=color("#233B5D"),
+            shadow_color=(0, 0, 0, 0.30),
             radius=dp(24),
         )
         card.bind(minimum_height=card.setter("height"))
 
-        card.add_widget(self._make_label("Материал для конспекта", 17, "#F8FAFC", True))
+        card.add_widget(self._make_label("Материал для конспекта", 18, "#FFFFFF", True))
         card.add_widget(self._make_label("Лучше писать конкретно: тема, класс, стиль и желаемая длина.", 12, "#8495AF"))
 
         input_wrap = Card(
             orientation="vertical",
-            padding=[dp(12), dp(8), dp(12), dp(8)],
+            padding=[dp(14), dp(10), dp(14), dp(10)],
             size_hint_y=None,
             height=dp(142),
             bg_color=color("#131F34"),
             border_color=color("#2B456B"),
+            shadow_color=(0, 0, 0, 0.12),
             radius=dp(20),
         )
         self.topic_input = TextInput(
@@ -363,51 +399,55 @@ class AutoConspectApp(App):
             background_active="",
             background_color=(0, 0, 0, 0),
             foreground_color=color("#F8FAFC"),
-            hint_text_color=color("#8495AF"),
-            cursor_color=color("#5B8CFF"),
+            hint_text_color=color("#74849F"),
+            cursor_color=color("#6EA0FF"),
             multiline=True,
-            padding=[0, dp(8), 0, dp(8)],
+            padding=[0, dp(10), 0, dp(8)],
         )
         input_wrap.add_widget(self.topic_input)
         card.add_widget(input_wrap)
 
-        chips = BoxLayout(orientation="horizontal", spacing=dp(8), size_hint_y=None, height=dp(42))
+        chips = GridLayout(cols=3, spacing=dp(8), size_hint_y=None, height=dp(48))
         self.detail_buttons = {}
         for key, info in DETAIL_OPTIONS.items():
-            btn = self._make_button(info["label"], bg="#131F34", fg="#AEBBCE", height=40, bold=True)
+            btn = self._make_button(info["label"], bg="#121D30", fg="#AEBBCE", height=46, bold=True)
             btn.bind(on_release=lambda inst, mode=key: self.set_detail_mode(mode))
             chips.add_widget(btn)
             self.detail_buttons[key] = btn
         card.add_widget(chips)
+
         self.content.add_widget(card)
         self.set_detail_mode("normal")
 
     def _build_action_row(self):
-        row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(54), spacing=dp(10))
-        self.generate_btn = self._make_button("Создать конспект", bg="#5B8CFF", fg="#FFFFFF", height=54, bold=True)
+        row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(58), spacing=dp(10))
+
+        self.generate_btn = self._make_button("Создать конспект", bg="#5B8CFF", fg="#FFFFFF", height=58, bold=True)
         self.generate_btn.bind(on_release=self.on_generate)
         row.add_widget(self.generate_btn)
 
-        clear_btn = self._make_button("Очистить", bg="#0E1A2C", fg="#AEBBCE", height=54, bold=True)
+        clear_btn = self._make_button("Очистить", bg="#0E1A2C", fg="#AEBBCE", height=58, bold=True)
         clear_btn.size_hint_x = 0.38
         clear_btn.bind(on_release=self.on_clear)
         row.add_widget(clear_btn)
+
         self.content.add_widget(row)
 
     def _build_status_card(self):
         self.status_card = Card(
             orientation="vertical",
-            padding=[dp(14), dp(12), dp(14), dp(12)],
-            spacing=dp(4),
+            padding=[dp(15), dp(12), dp(15), dp(12)],
+            spacing=dp(5),
             size_hint_y=None,
             bg_color=color("#0B1728"),
-            border_color=color("#233B5D"),
-            radius=dp(20),
+            border_color=color("#223858"),
+            shadow_color=(0, 0, 0, 0.20),
+            radius=dp(22),
         )
         self.status_card.bind(minimum_height=self.status_card.setter("height"))
 
-        self.status_title = self._make_label("Готов к работе", 14, "#35D49B", True)
-        self.status_text = self._make_label("Модель: Gemini 2.5 Flash, режим: Стандарт", 12, "#AEBBCE")
+        self.status_title = self._make_label("Готов к работе", 15, "#35D49B", True)
+        self.status_text = self._make_label("Модель: 2.5 Flash, режим: Стандарт", 12, "#AEBBCE")
         self.status_card.add_widget(self.status_title)
         self.status_card.add_widget(self.status_text)
         self.content.add_widget(self.status_card)
@@ -420,31 +460,33 @@ class AutoConspectApp(App):
             size_hint_y=None,
             bg_color=color("#0E1A2C"),
             border_color=color("#233B5D"),
+            shadow_color=(0, 0, 0, 0.30),
             radius=dp(24),
         )
         card.bind(minimum_height=card.setter("height"))
 
-        top_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(40), spacing=dp(10))
+        top_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(44), spacing=dp(10))
         title_box = BoxLayout(orientation="vertical")
-        self.output_title = self._make_label("Конспект", 17, "#F8FAFC", True, 23)
+        self.output_title = self._make_label("Конспект", 18, "#FFFFFF", True, 25)
         self.output_meta = self._make_label("Здесь появится результат", 12, "#8495AF", False, 17)
         title_box.add_widget(self.output_title)
         title_box.add_widget(self.output_meta)
         top_row.add_widget(title_box)
 
-        copy_btn = self._make_button("Копия", bg="#131F34", fg="#AEBBCE", height=40, bold=True)
-        copy_btn.size_hint_x = 0.32
+        copy_btn = self._make_button("Копировать", bg="#14243B", fg="#D7E2F4", height=42, bold=True)
+        copy_btn.size_hint_x = 0.36
         copy_btn.bind(on_release=self.copy_result)
         top_row.add_widget(copy_btn)
         card.add_widget(top_row)
 
         result_wrap = Card(
             orientation="vertical",
-            padding=[dp(14), dp(14), dp(14), dp(14)],
+            padding=[dp(15), dp(15), dp(15), dp(15)],
             size_hint_y=None,
             bg_color=color("#08111F"),
             border_color=color("#1B2E4A"),
-            radius=dp(16),
+            shadow_color=(0, 0, 0, 0.08),
+            radius=dp(18),
         )
         result_wrap.bind(minimum_height=result_wrap.setter("height"))
 
@@ -458,9 +500,10 @@ class AutoConspectApp(App):
             size_hint_y=None,
         )
         self.output_label.bind(width=lambda inst, value: setattr(inst, "text_size", (value, None)))
-        self.output_label.bind(texture_size=lambda inst, value: setattr(inst, "height", value[1] + dp(10)))
+        self.output_label.bind(texture_size=lambda inst, value: setattr(inst, "height", value[1] + dp(14)))
         result_wrap.add_widget(self.output_label)
         card.add_widget(result_wrap)
+
         self.content.add_widget(card)
 
     def _build_model_button(self):
@@ -476,7 +519,7 @@ class AutoConspectApp(App):
             background_color=color("#2563EB"),
             color=color("#FFFFFF"),
         )
-        self.model_button.bind(on_release=self.open_model_popup)
+        self.model_button.bind(on_release=self.open_model_modal)
         holder.add_widget(self.model_button)
         self.root_float.add_widget(holder)
 
@@ -487,7 +530,7 @@ class AutoConspectApp(App):
                 btn.background_color = color("#5B8CFF")
                 btn.color = color("#FFFFFF")
             else:
-                btn.background_color = color("#131F34")
+                btn.background_color = color("#121D30")
                 btn.color = color("#AEBBCE")
         if hasattr(self, "status_text"):
             self.update_ready_status()
@@ -507,32 +550,52 @@ class AutoConspectApp(App):
     def get_model_short(self, code):
         return self.get_model_item(code)["short"]
 
-    def open_model_popup(self, *args):
-        modal = ModalView(size_hint=(0.92, None), height=dp(520), background_color=(0, 0, 0, 0.55), auto_dismiss=True)
+    def open_model_modal(self, *args):
+        modal = ModalView(
+            size_hint=(0.92, 0.86),
+            background_color=(0, 0, 0, 0.60),
+            auto_dismiss=True,
+        )
 
         outer = Card(
             orientation="vertical",
-            padding=[dp(18), dp(18), dp(18), dp(18)],
+            padding=[dp(14), dp(14), dp(14), dp(14)],
             spacing=dp(12),
-            bg_color=color("#0B1728"),
+            bg_color=color("#07111F"),
             border_color=color("#2B456B"),
-            shadow_color=(0, 0, 0, 0.38),
-            radius=dp(26),
+            shadow_color=(0, 0, 0, 0.45),
+            radius=dp(28),
         )
 
-        outer.add_widget(self._make_label("Выбор модели", 22, "#FFFFFF", True, 31))
-        outer.add_widget(self._make_label(
-            "Если Gemini 2.5 перегружена, переключись на Lite или DeepSeek. Дипсик тоже не святой, но иногда спасает.",
-            13,
+        header = Card(
+            orientation="vertical",
+            padding=[dp(16), dp(14), dp(16), dp(14)],
+            spacing=dp(6),
+            size_hint_y=None,
+            bg_color=color("#0E1A2C"),
+            border_color=color("#2B456B"),
+            shadow_color=(0, 0, 0, 0.18),
+            radius=dp(22),
+        )
+        header.bind(minimum_height=header.setter("height"))
+        header.add_widget(self._make_label("Выбор модели", 22, "#FFFFFF", True))
+        header.add_widget(self._make_label(
+            "Если одна модель перегружена, переключись на другую. Да, теперь приложение хоть немного похоже на инструмент, а не на кнопку страдания.",
+            12,
             "#AEBBCE",
         ))
+        outer.add_widget(header)
+
+        models_scroll = ScrollView(size_hint=(1, 1), bar_width=dp(3), scroll_type=["bars", "content"])
+        models_box = BoxLayout(orientation="vertical", spacing=dp(10), size_hint_y=None)
+        models_box.bind(minimum_height=models_box.setter("height"))
 
         for item in MODEL_OPTIONS:
             active = item["code"] == self.selected_model
             model_card = Card(
                 orientation="vertical",
                 padding=[dp(12), dp(10), dp(12), dp(10)],
-                spacing=dp(3),
+                spacing=dp(7),
                 size_hint_y=None,
                 bg_color=color("#173966") if active else color("#101E32"),
                 border_color=color("#6EA0FF") if active else color("#243B5D"),
@@ -540,47 +603,49 @@ class AutoConspectApp(App):
                 radius=dp(18),
             )
             model_card.bind(minimum_height=model_card.setter("height"))
+
             title = item["label"] + (" - выбрано" if active else "")
             btn = self._make_button(title, bg="#5B8CFF" if active else "#14243B", fg="#FFFFFF", height=42, bold=True)
             btn.bind(on_release=lambda inst, model=item["code"], view=modal: self.select_model(model, view))
             model_card.add_widget(btn)
-            model_card.add_widget(self._make_label(item["hint"], 11, "#93A4BC"))
-            outer.add_widget(model_card)
+            model_card.add_widget(self._make_label(item["hint"], 11, "#A7B7CF"))
+            models_box.add_widget(model_card)
 
-        close_btn = self._make_button("Закрыть", bg="#0E1A2C", fg="#D7E2F4", height=44, bold=True)
+        models_scroll.add_widget(models_box)
+        outer.add_widget(models_scroll)
+
+        close_btn = self._make_button("Закрыть", bg="#0E1A2C", fg="#D7E2F4", height=46, bold=True)
         close_btn.bind(on_release=lambda inst: modal.dismiss())
         outer.add_widget(close_btn)
 
         modal.add_widget(outer)
-        self.model_popup = modal
+        self.model_modal = modal
         modal.open()
 
     def select_model(self, model_code, view=None):
         self.selected_model = model_code
         if view:
             view.dismiss()
-        elif self.model_popup:
-            self.model_popup.dismiss()
         self.status_title.text = "Модель переключена"
         self.status_title.color = color("#35D49B")
         self.update_ready_status()
 
     def on_generate(self, *args):
         if self.request_running:
-            self.set_status("Запрос уже идет", "Дождись ответа. Повторный тап не ускорит сервер.", "#F0B24C")
+            self.set_status("Запрос уже идет", "Дождись ответа перед новым запуском.", "#F0B24C")
             return
 
         topic = self.topic_input.text.strip()
         if not topic:
-            self.set_status("Нужна тема", "Поле пустое. Модель не умеет читать мысли, какая потеря для науки.", "#FF6B6B")
+            self.set_status("Нужна тема", "Поле пустое. Введи тему или текст для конспекта.", "#FF6B6B")
             return
 
         model_item = self.get_model_item(self.selected_model)
         if model_item["provider"] == "gemini" and not GEMINI_API_KEY:
             self.show_error("Не найден GEMINI_API_KEY. Проверь GitHub Secret и шаг Create secret_config.py в build.yml.")
             return
-        if model_item["provider"] == "deepseek" and not DEEPSEEK_API_KEY:
-            self.show_error("Не найден DEEPSEEK_API_KEY. Создай второй GitHub Secret с ключом DeepSeek.")
+        if model_item["provider"] == "groq" and not GROQ_API_KEY:
+            self.show_error("Не найден GROQ_API_KEY. Создай GitHub Secret с ключом Groq.")
             return
 
         mode_label = DETAIL_OPTIONS[self.detail_mode]["label"]
@@ -660,8 +725,8 @@ class AutoConspectApp(App):
 
     def call_model_once(self, model, prompt, max_tokens):
         item = self.get_model_item(model)
-        if item["provider"] == "deepseek":
-            return self.call_deepseek_once(model, prompt, max_tokens)
+        if item["provider"] == "groq":
+            return self.call_groq_once(model, prompt, max_tokens)
         return self.call_gemini_once(model, prompt, max_tokens)
 
     def open_request(self, req):
@@ -677,7 +742,10 @@ class AutoConspectApp(App):
             raise
 
     def call_gemini_once(self, model, prompt, max_tokens):
-        url = GEMINI_API_URL.format(model=model)
+        item = self.get_model_item(model)
+        api_version = item.get("api_version", "v1beta")
+        url = f"https://generativelanguage.googleapis.com/{api_version}/models/{model}:generateContent"
+
         payload = {
             "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
             "contents": [{"parts": [{"text": prompt}]}],
@@ -713,7 +781,7 @@ class AutoConspectApp(App):
 
         return self.parse_gemini_success(data)
 
-    def call_deepseek_once(self, model, prompt, max_tokens):
+    def call_groq_once(self, model, prompt, max_tokens):
         payload = {
             "model": model,
             "messages": [
@@ -721,16 +789,16 @@ class AutoConspectApp(App):
                 {"role": "user", "content": prompt},
             ],
             "temperature": 0.45,
-            "max_tokens": max_tokens,
+            "max_completion_tokens": max_tokens,
             "stream": False,
         }
         body = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
-            DEEPSEEK_API_URL,
+            GROQ_API_URL,
             data=body,
             headers={
                 "Content-Type": "application/json; charset=utf-8",
-                "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+                "Authorization": f"Bearer {GROQ_API_KEY}",
             },
             method="POST",
         )
@@ -747,7 +815,7 @@ class AutoConspectApp(App):
         except urllib.error.URLError as e:
             raise TemporaryAPIError(str(e))
 
-        return self.parse_deepseek_success(data)
+        return self.parse_groq_success(data)
 
     def parse_gemini_success(self, data):
         candidates = data.get("candidates") or []
@@ -759,14 +827,14 @@ class AutoConspectApp(App):
             raise APIError(f"Нет текста в ответе: {data}")
         return {"text": text, "usage": data.get("usageMetadata", {})}
 
-    def parse_deepseek_success(self, data):
+    def parse_groq_success(self, data):
         choices = data.get("choices") or []
         if not choices:
-            raise APIError(f"Нет choices в ответе DeepSeek: {data}")
+            raise APIError(f"Нет choices в ответе Groq: {data}")
         message = choices[0].get("message") or {}
         text = (message.get("content") or "").strip()
         if not text:
-            raise APIError(f"Нет текста в ответе DeepSeek: {data}")
+            raise APIError(f"Нет текста в ответе Groq: {data}")
         return {"text": text, "usage": data.get("usage", {})}
 
     def parse_api_error(self, raw):
@@ -823,7 +891,7 @@ class AutoConspectApp(App):
 
     def copy_result(self, *args):
         if not self.last_result:
-            self.set_status("Копировать нечего", "Сначала создай конспект. Пустоту в буфер тащить не будем.", "#F0B24C")
+            self.set_status("Копировать нечего", "Сначала создай конспект.", "#F0B24C")
             return
         Clipboard.copy(self.last_result)
         self.set_status("Скопировано", "Конспект отправлен в буфер обмена.", "#35D49B")
