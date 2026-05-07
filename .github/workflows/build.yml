@@ -21,6 +21,7 @@ jobs:
         run: |
           cat > secret_config.py <<EOF
           GEMINI_API_KEY = "${{ secrets.GEMINI_API_KEY }}"
+          DEEPSEEK_API_KEY = "${{ secrets.DEEPSEEK_API_KEY }}"
           EOF
 
       - name: Build APK
