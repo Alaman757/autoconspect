@@ -763,6 +763,7 @@ class AutoConspectApp(App):
             headers={
                 "Content-Type": "application/json; charset=utf-8",
                 "x-goog-api-key": GEMINI_API_KEY,
+                "User-Agent": "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 AutoconspectApp/1.0",
             },
             method="POST",
         )
@@ -799,6 +800,7 @@ class AutoConspectApp(App):
             headers={
                 "Content-Type": "application/json; charset=utf-8",
                 "Authorization": f"Bearer {GROQ_API_KEY}",
+                "User-Agent": "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 AutoconspectApp/1.0",
             },
             method="POST",
         )
