@@ -9,7 +9,7 @@ source.exclude_patterns = .git/*,.github/*,.venv/*,venv/*,__pycache__/*,*.pyc,*.
 
 version = 1.0
 
-requirements = python3,kivy
+requirements = python3,kivy,certifi
 
 orientation = portrait
 fullscreen = 0
