@@ -1,0 +1,55 @@
+name: Build APK
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    container:
+      image: kivy/buildozer
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Create secret_config.py
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
+          groq_key = os.environ.get("GROQ_API_KEY", "").strip()
+
+          if not gemini_key:
+              raise SystemExit("GEMINI_API_KEY secret is empty or missing")
+          if not groq_key:
+              raise SystemExit("GROQ_API_KEY secret is empty or missing")
+
+          Path("secret_config.py").write_text(
+              "GEMINI_API_KEY = " + repr(gemini_key) + "\n" +
+              "GROQ_API_KEY = " + repr(groq_key) + "\n",
+              encoding="utf-8",
+          )
+
+          print("secret_config.py created: GEMINI_API_KEY and GROQ_API_KEY are present")
+          PY
+
+      - name: Build APK
+        run: |
+          printf "y\n" | buildozer android debug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: bin/*.apk
+          if-no-files-found: error

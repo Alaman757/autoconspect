@@ -1,0 +1,6 @@
+secret_config.py
+.venv/
+__pycache__/
+*.pyc
+.buildozer/
+bin/
